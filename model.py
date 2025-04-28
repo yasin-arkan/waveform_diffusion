@@ -49,6 +49,8 @@ class SinusoidalPositionEmbeddings(nn.Module):
         return embeddings
 
 
+
+
 class SimpleUnet(nn.Module):
     """
     A simplified variant of the Unet architecture.

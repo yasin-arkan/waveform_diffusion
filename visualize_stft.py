@@ -8,6 +8,9 @@ import matplotlib.pyplot as plt
 
 data = pd.read_csv("data/timeseries_EW.csv")
 
+# This file is for visualizing a single waveform's STFT before any of the normalization and training
+
+
 WAVEFORM_INDEX = 0
 
 info_cols = data.columns[:16]

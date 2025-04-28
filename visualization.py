@@ -27,6 +27,8 @@ NOISE_SCHEDULE_TYPE = 'linear'
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SAMPLE_RATE = 7000 # IMPORTANT: Specify the sample rate of your original audio
 
+conditional_values = [40.4328, 29.1212, 40.5683, 28.8660, 6.6, 2.3, 26.3507] # These are values of station and source latitude and longitudes, plus phase, magnitude and rupture. 
+
 
 # --- 2. Load Trained Model ---
 logging.info("Loading trained model...")
@@ -201,7 +203,7 @@ if __name__ == "__main__":
     # Create or load your condition vector(s) here
     # Example: Using a random vector
     # Ensure it has shape [NUM_SAMPLES_TO_GENERATE, COND_DIM]
-    example_condition = np.array([[40.4328, 29.1212, 40.5683, 28.8660, 6.6, 2.3, 26.3507]])
+    example_condition = np.array([conditional_values])
     example_condition = torch.from_numpy(example_condition)
     logging.info(f"Using example condition vector shape: {example_condition.shape}")
 
