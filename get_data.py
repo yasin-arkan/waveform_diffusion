@@ -71,7 +71,7 @@ def load_data(path, n_fft, hop_length, win_length ,window):
     cond_var = torch.from_numpy(cond_var)
 
     dataset = WaveformSTFTDataset(wfs, cond_var)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=2)
 
     print("Waveform magnitudes:", dataset.wfs.shape)
     print("Conditional variables:", dataset.cond_var.shape)
@@ -90,7 +90,7 @@ class WaveformSTFTDataset(Dataset):
     def __getitem__(self, idx):
         return self.wfs[idx], self.cond_var[idx]
 
-dataset, length, wfs_min, wfs_max = load_data("timeseries_EW.csv", N_FFT, HOP_LENGTH, WIN_LENGTH, WINDOW_TENSOR)
+# dataset, dataloader, length, wfs_min, wfs_max = load_data("data/timeseries_EW.csv", N_FFT, HOP_LENGTH, WIN_LENGTH, WINDOW_TENSOR)
 
 
 
