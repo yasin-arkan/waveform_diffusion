@@ -57,6 +57,9 @@ def train_epoch(model, dataloader, optimizer, criterion, sqrt_alpha_bar, sqrt_on
         
         batch_X_0 = batch_X_0.to(device)
         batch_c = batch_c.to(device).float() # Assuming batch_c is [B, COND_DIM]
+
+        # print("STFT SHAPE",batch_X_0.shape) # [32, 128, 128]
+        # print("CONDITIONALS SHAPE",batch_c.shape) # [32, 4]
         
         current_batch_size = batch_X_0.shape[0]
 
@@ -152,13 +155,13 @@ if __name__ == "__main__":
         # --- Optional: Add evaluation/validation step here ---
         # model.eval()
         # with torch.no_grad():
-        #    # Run validation loop
+        #    # Run validation loop  
         #    val_loss = evaluate_epoch(...)
         #    logging.info(f"Epoch {epoch+1}/{NUM_EPOCHS}, Validation Loss: {val_loss:.4f}")
 
-        # --- Optional: Save model checkpoint periodically ---
+        # Save model checkpoint periodically 
         if (epoch + 1) % 10 == 0:
-            checkpoint_path = f"model_epoch_{epoch+1}.pth"
+            checkpoint_path = f"checkpoints/model_epoch_{epoch+1}.pth"
             torch.save({
                 'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),

@@ -38,17 +38,17 @@ def load_data(path, n_fft, hop_length, win_length ,window):
 
     wfs = torch.abs(wfs) # Magnitude 
 
-    # # Our goal here is to pad the shape into [1183, 128, 128]
-    # print("Before padding:", wfs.shape) # Right now it is [1183, 129, 110]
-    # wfs = wfs[:, :128, :] # Discarding the last frequency to make it 128 
+    # Our goal here is to pad the shape into [1183, 128, 128]
+    print("Before padding:", wfs.shape) # Right now it is [1183, 129, 110]
+    wfs = wfs[:, :128, :] # Discarding the last frequency to make it 128 
 
-    # current_time_dim = wfs.shape[2] # Should be 110, we will pad it to 128
-    # padding_needed = 128 - current_time_dim 
+    current_time_dim = wfs.shape[2] # Should be 110, we will pad it to 128
+    padding_needed = 128 - current_time_dim 
 
-    # time_padding = (0, padding_needed)
-    # wfs = F.pad(wfs, time_padding, mode='constant')
+    time_padding = (0, padding_needed)
+    wfs = F.pad(wfs, time_padding, mode='constant')
 
-    # print("After padding:" ,wfs.shape) # Now it is [1183, 128, 128]
+    print("After padding:" ,wfs.shape) # Now it is [1183, 128, 128]
     
 
     # We get the length for now and reshape the wfs to squeeze last 2 dimensions,
@@ -95,7 +95,8 @@ dataset, dataloader, length, wfs_min, wfs_max = load_data("data/timeseries_EW.cs
 
 
 
-# Plot the spectrograms
+# Plot the spectrograms 
+# Currently, this doesn't work because we padded the waveforms to [128, 128] for training, which breaks GriffinLim, will fix  
 def plot_sample_stft(n):
   num_samples_to_plot = n
   sample_indices = random.sample(range(length), num_samples_to_plot)
@@ -107,7 +108,7 @@ def plot_sample_stft(n):
       # spectrogram = spectrogram.cpu().detach().numpy()
 
       tf = torchaudio.transforms.GriffinLim(N_FFT, 256, WIN_LENGTH, HOP_LENGTH, power=1)
-
+    
       waveform = tf(spectrogram)
       wf = waveform.numpy()
 
@@ -125,4 +126,4 @@ def plot_sample_stft(n):
       plt.show()
 
 
-plot_sample_stft(1)
+# plot_sample_stft(1)

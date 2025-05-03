@@ -1,36 +1,43 @@
-import os 
-import torch
+import torch 
+import torchaudio
 import logging
 import numpy as np 
 import matplotlib.pyplot as plt 
 import torch.nn.functional as F
-import torchaudio.transforms as T
-from noise_linear import linear_beta_schedule
-from get_data import load_data
 from model import SimpleUnet
 
-TOTAL_DIFFUSION_STEPS = 1000
-N_FFT = 256
-HOP_LENGTH = 64 
-WIN_LENGTH = N_FFT
-WINDOW_TENSOR = torch.hann_window(WIN_LENGTH, periodic=True)
-COND_DIM = 4
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-sample_rate = 7000
+import obspy 
 
-# 1. Input Conditioning
-station_location =  [40.4328, 29.1212, 40.5683, 28.8660]
-source_location =  [40.5683, 28.8660]
-# Preprocess coordinates if necessary
+device = torch.device('cuda' if torch.cuda.is_available else 'cpu')
 
-logging.info("Loading trained model...")
-MODEL_CHECKPOINT_PATH = "checkpoints/model_epoch_100.pth" # <<< CHANGE TO YOUR CHECKPOINT PATH
+N_FFT = 256      
+HOP_LENGTH = 64  
+WIN_LENGTH = N_FFT 
+WINDOW_TENSOR = torch.hann_window(window_length=WIN_LENGTH, periodic=True)
 
-dataset, dataloader, dataset_length, wf_min, wf_max = load_data(
-            "data/timeseries_EW.csv", N_FFT, HOP_LENGTH, WIN_LENGTH, WINDOW_TENSOR
-        )
+def linear_beta_schedule(timesteps, start=0.0001, end=0.02):
+    return torch.linspace(start, end, timesteps)
 
-model = SimpleUnet(cond_dim=COND_DIM).to(device)
+
+MODEL_CHECKPOINT_PATH = "checkpoints/model_epoch_50.pth"
+T = 300 
+betas = linear_beta_schedule(300)
+alphas = 1. - betas
+alphas_cumprod = torch.cumprod(alphas, axis=0)
+alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
+sqrt_recip_alphas = torch.sqrt(1.0 / alphas)
+sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
+sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - alphas_cumprod)
+posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
+
+
+
+
+model = SimpleUnet(cond_dim=4).to(device)
+
+condition_vec = np.array([40.4328, 29.1212, 40.5683, 28.8660])
+condition_vec = torch.from_numpy(condition_vec).float().to(device)
+
 
 try:
     checkpoint = torch.load(MODEL_CHECKPOINT_PATH, map_location=device)
@@ -45,171 +52,84 @@ except Exception as e:
     logging.error(f"Error loading model: {e}")
     exit(1)
 
+def get_index_from_list(vals, t, x_shape):
+    """ 
+    Returns a specific index t of a passed list of values vals
+    while considering the batch dimension.
+    """
+    batch_size = t.shape[0]
+    out = vals.gather(-1, t.cpu())
+    return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(t.device)
 
 
-betas = linear_beta_schedule(1000).to(device)
-alphas = (1. - betas).to(device)
-alphas_cumprod = torch.cumprod(alphas, dim=0).to(device)
-# Schedule needed for the reverse formula's noise term coefficient
-sqrt_one_minus_alpha_bar = torch.sqrt(1. - alphas_cumprod).to(device)
-# Variance term for DDPM sampling step (simplest choice)
-posterior_variance = betas * (1. - torch.cat([torch.tensor([0.0], device=device), alphas_cumprod[:-1]])) / (1. - alphas_cumprod)
-# Avoid division by zero at step 0 - use beta_tilde (clipped beta)
-posterior_log_variance_clipped = torch.log(torch.maximum(posterior_variance, torch.tensor(1e-20, device=device)))
+@torch.no_grad()
+def sample_timestep(x, t):
+    """
+    Calls the model to predict the noise in the image and returns 
+    the denoised image. 
+    Applies noise to this image, if we are not in the last step yet.
+    """
 
-# 2. Generate Random Noise
-noise = torch.randn(1, 1, 128, 128)  # Adjust shape as needed
+    betas_t = get_index_from_list(betas, t, x.shape).to(device)
+    
+    sqrt_one_minus_alphas_cumprod_t = get_index_from_list(
+        sqrt_one_minus_alphas_cumprod, t, x.shape
+    )
+    
+    sqrt_recip_alphas_t = get_index_from_list(sqrt_recip_alphas, t, x.shape).to(device)
+    
+    # Call model (current image - noise prediction)
+    model_mean = sqrt_recip_alphas_t * (
+        x - betas_t * model(x, t, condition_vec) / sqrt_one_minus_alphas_cumprod_t
+    ).to(device)
 
-@torch.no_grad() # Disable gradient calculations for inference
-def sample(model, num_samples, condition_vectors, schedules, device):
-    """Generates samples using the DDPM reverse process."""
-    (betas, alphas, alphas_cumprod, sqrt_one_minus_alpha_bar, posterior_log_variance_clipped) = schedules
-    img_channels = 1 # Should match model's out_dim / input dim channel
-    img_height, img_width = 128, 128 
-
-    # Start with pure Gaussian noise
-    x_t = torch.randn(num_samples, img_channels, img_height, img_width, device=device)
-    condition_vectors = condition_vectors.to(device).float() # Ensure condition is on device
-
-    logging.info(f"Starting sampling loop for {num_samples} samples...")
-    for t_int in reversed(range(1, TOTAL_DIFFUSION_STEPS + 1)):
-        t = torch.full((num_samples,), t_int - 1, device=device, dtype=torch.long) # t-1 for 0-indexing
-
-        # Predict noise using the model
-        predicted_noise = model(x_t, t, condition_vectors)
-
+    posterior_variance_t = get_index_from_list(posterior_variance, t, x.shape).to(device)
   
 
-        # Get schedule parameters for current t
-        beta_t = betas[t].view(num_samples, 1, 1, 1)
-        alpha_t = alphas[t].view(num_samples, 1, 1, 1)
-        alpha_bar_t = alphas_cumprod[t].view(num_samples, 1, 1, 1)
-        sqrt_one_minus_alpha_bar_t = sqrt_one_minus_alpha_bar[t].view(num_samples, 1, 1, 1)
-        log_variance_t = posterior_log_variance_clipped[t].view(num_samples, 1, 1, 1)
+    if t == 0:
+        # As pointed out by Luis Pereira (see YouTube comment)
+        # The t's are offset from the t's in the paper
+        return model_mean
+    else:
+        noise = torch.randn_like(x)
+        return model_mean + torch.sqrt(posterior_variance_t) * noise 
 
-        # Calculate x_{t-1} mean
-        mean = (1 / torch.sqrt(alpha_t) + 1e-8) * (x_t - (beta_t / sqrt_one_minus_alpha_bar_t) * predicted_noise)
+@torch.no_grad()
+def sample_plot_image():
+    # Sample noise
+    img_size = 128
+    spec_noise = torch.randn((1, 1, img_size, img_size), device=device)
+    num_images = 1
+    stepsize = int(T/num_images)
 
-        # Add noise term for stochasticity (DDPM step)
-        if t_int > 1:
-            noise = torch.randn_like(x_t)
-            variance = torch.exp(0.5 * log_variance_t) # sigma_t
-            x_t_prev = mean + variance * noise
-        else:
-            # Last step, no noise added
-            x_t_prev = mean
+    for i in range(0,T)[::-1]:
+        t = torch.full((1,), i, device=device, dtype=torch.long)
+        spec = sample_timestep(spec_noise, t)
+        spec = spec.squeeze()
 
-        x_t = x_t_prev # Update for next iteration
+        tf = torchaudio.transforms.GriffinLim(255, 255, 255, HOP_LENGTH, window_fn=torch.hann_window ,power=1).to(device)
+        
+        if i % stepsize == 0:
+            waveform = tf(spec)
+            wf = waveform.cpu().numpy()
 
-        print(x_t)
+            wf = wf.flatten()
 
+            trace = obspy.Trace(data=wf)
+            trace.stats.sampling_rate = 100
 
-        # Optional: Log progress
-        # if t_int % 100 == 0:
-        #     logging.info(f"  Sampling step {t_int}/{TOTAL_DIFFUSION_STEPS}")
+            stream = obspy.Stream([trace])
+            stream.plot()
 
-    logging.info("Sampling complete.")
-    # x_t now holds the predicted x_0 (clean data)
-    # Output might be scaled [-1, 1] or [0, 1] depending on training data scaling.
-    # Assume output is the linear magnitude spectrogram for now.
-    # Remove channel dimension for STFT processing: [B, 1, H, W] -> [B, H, W]
-    return x_t.squeeze(1)
+            spec = spec.cpu()
 
-def reconstruct_waveform(magnitude_spectrogram, n_fft, hop_length, win_length, window):
-    """Reconstructs waveform from magnitude spectrogram using Griffin-Lim."""
-    logging.info("Reconstructing waveform using Griffin-Lim...")
-    # Ensure spectrogram is on CPU and detach if needed
-    magnitude_spectrogram = magnitude_spectrogram.cpu().detach()
+            plt.figure(figsize=(9, 6))
+            plt.imshow(spec, origin='lower', aspect='auto', cmap='viridis')
+            plt.xlabel('Time Frame')
+            plt.ylabel('Frequency Bin')
+            plt.title(f"Spectrogram for Sample {i}")
+            
+    plt.show()   
+           
 
-    # Griffin-Lim expects power, but often works okay with magnitude directly.
-    # For better results, power = magnitude**2, but let's try magnitude first.
-    # power_spectrogram = magnitude_spectrogram.pow(2)
-
-    griffin_lim_transform = T.GriffinLim(
-        n_fft=n_fft,
-        win_length=win_length,
-        hop_length=hop_length,
-        power=1.0, # Power to raise magnitude before GL (1.0 = use magnitude)
-        n_iter=32  # Number of iterations
-    ).cpu()
-
-    waveform = griffin_lim_transform(magnitude_spectrogram)
-    logging.info("Waveform reconstruction complete.")
-    return waveform
-
-
-
-def visualize_results(spectrogram, waveform, sr):
-    """Displays the spectrogram and waveform, plays audio."""
-    # Ensure data is on CPU and converted to numpy for plotting
-    spec_np = spectrogram.cpu().detach().numpy()
-    wf_np = waveform.cpu().detach().numpy()
-
-    fig, axs = plt.subplots(2, 1, figsize=(10, 8))
-
-    # Plot Spectrogram
-    axs[0].set_title("Generated STFT Magnitude Spectrogram")
-    im = axs[0].imshow(spec_np, aspect='auto', origin='lower', cmap='viridis')
-    plt.colorbar(im, ax=axs[0], format="%+2.0f dB") # Assuming magnitude needs interpretation
-    axs[0].set_ylabel("Frequency Bins")
-    axs[0].set_xlabel("Time Frames")
-
-    # Plot Waveform
-    axs[1].set_title("Reconstructed Waveform")
-    time_axis = np.linspace(0, len(wf_np), num=len(wf_np))
-    axs[1].plot(time_axis, wf_np)
-    axs[1].set_xlabel("Time (s)")
-    axs[1].set_ylabel("Amplitude")
-
-    plt.tight_layout()
-    plt.show()
-
-
-if __name__ == "__main__":
-    print("Start")
-    NUM_SAMPLES_TO_GENERATE = 1 # Generate one sample
-
-    # --- Prepare Conditioning Data ---
-    # Create or load your condition vector(s) here
-    # Example: Using a random vector
-    # Ensure it has shape [NUM_SAMPLES_TO_GENERATE, COND_DIM]
-    example_condition = np.array(station_location)
-    example_condition = torch.from_numpy(example_condition)
-    logging.info(f"Using example condition vector shape: {example_condition.shape}")
-
-    # --- Collect Schedules ---
-    schedules = (betas, alphas, alphas_cumprod, sqrt_one_minus_alpha_bar, posterior_log_variance_clipped)
-
-    # --- Generate Sample(s) ---
-    generated_spectrograms = sample(
-        model,
-        NUM_SAMPLES_TO_GENERATE,
-        example_condition,
-        schedules,
-        device,
-    ) # Output shape: [num_samples, H, W]
-
-    output_dir = "generated_waveforms" # Directory to save plots
-    os.makedirs(output_dir, exist_ok=True) 
-
-    # --- Reconstruct and Visualize each sample ---
-    for i in range(NUM_SAMPLES_TO_GENERATE):
-        logging.info(f"--- Processing Sample {i+1}/{NUM_SAMPLES_TO_GENERATE} ---")
-        spec = generated_spectrograms[i] # Shape [H, W]
-
-
-        padding = (0, 0, 0, 1) # (pad time_left, pad time_right, pad freq_top, pad freq_bottom)
-        spec_padded = F.pad(spec, padding, mode='constant', value=0)
-        # spec_padded shape is now [129, 128]
-        logging.info(f"Padded spectrogram shape for ISTFT: {spec_padded.shape}")
-
-        spec_padded = spec_padded * (wf_max - wf_min) + wf_min
-
-        waveform = reconstruct_waveform(
-            spec_padded, N_FFT, HOP_LENGTH, WIN_LENGTH, torch.hann_window
-        ) # Output shape: [num_audio_samples]
-
-        output_filename = os.path.join(output_dir, f"waveform_sample_{i+1}.png")
-
-        visualize_results(spec, waveform, sample_rate)
-
+sample_plot_image()   
