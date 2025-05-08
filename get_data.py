@@ -16,12 +16,13 @@ import librosa
 N_FFT = 256      
 HOP_LENGTH = 64  
 WIN_LENGTH = N_FFT 
-WINDOW_TENSOR = torch.hann_window(WIN_LENGTH, periodic=True)
 
-def load_data(path, n_fft, hop_length, win_length ,window):
+file_path = "data/timeseries_EW.csv"
+
+def load_data(path, n_fft, hop_length, win_length, batch_size=32):
     data = pd.read_csv(path)
 
-    cond_cols = ['EventLat', 'EventLon', 'StationLat', 'StationLon', 'Depth', 'Magnitude']
+    cond_cols = ['EventLat', 'EventLon', 'StationLat', 'StationLon', 'Depth', 'Magnitude', 'RuptureDist_km']
     cond_vars = data[cond_cols]
 
     cond_data = []
@@ -44,11 +45,17 @@ def load_data(path, n_fft, hop_length, win_length ,window):
 
     wfs = librosa.stft(wfs, n_fft=n_fft, hop_length=hop_length, win_length=win_length)
 
+    wfs = np.abs(wfs)
     wfs = torch.from_numpy(wfs).float()
-    wfs = torch.abs(wfs)# Magnitude with shape [1183, 129, 110]
+    # Magnitude with shape [1183, 129, 110]
 
-    wfs = wfs[:, :128, :] # Discarding the last frequency to make it 128 
-    print("After padding:" ,wfs.shape) # Now it is [1183, 128, 110]
+    wfs = wfs[:, :128, :] # Discarding the last frequency to make it 128
+
+    current_time_dim = wfs.shape[2] # Should be 110, we will pad it to 128
+    padding_needed = 128 - current_time_dim 
+    time_padding = (0, padding_needed)
+    wfs = F.pad(wfs, time_padding, mode='constant', value=wfs.median())
+    print("After padding:" ,wfs.shape) # Now it is [1183, 128, 128]
     
 
     # We get the length for now and reshape the wfs to squeeze last 2 dimensions,
@@ -70,12 +77,15 @@ def load_data(path, n_fft, hop_length, win_length ,window):
     cond_var = torch.from_numpy(cond_var)
 
     dataset = WaveformSTFTDataset(wfs, cond_var)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    print("Waveform magnitudes:", dataset.wfs.shape)
-    print("Conditional variables:", dataset.cond_var.shape)
+    print("Waveform shape:", dataset.wfs.shape)
+    print("Cond shape:", dataset.cond_var.shape)
+    
+    return dataset, dataloader, length, wfs_mean, wfs_std, norm_dict
 
-    return dataset, dataloader, length, wfs_mean, wfs_std
+
+
 
 class WaveformSTFTDataset(Dataset):
     def __init__(self, wfs, cond_var):
@@ -89,40 +99,42 @@ class WaveformSTFTDataset(Dataset):
     def __getitem__(self, idx):
         return self.wfs[idx], self.cond_var[idx]
 
-dataset, dataloader, length, wfs_mean, wfs_std = load_data("data/timeseries_EW.csv", N_FFT, HOP_LENGTH, WIN_LENGTH, WINDOW_TENSOR)
+if __name__ == "__main__":
+
+  dataset, dataloader, length, wfs_mean, wfs_std, norm_dict = load_data(file_path,
+                                                                        N_FFT,
+                                                                        HOP_LENGTH,
+                                                                        WIN_LENGTH,
+                                                                        batch_size=32)
+  # Plot the spectrograms 
+  def plot_sample_stft():
+
+    index = random.randint(0, 1000)
+    spectrogram = dataset.wfs[index].cpu().numpy()
+    print(spectrogram.shape)
+
+    # Reshape if necessary
+    # spectrogram = spectrogram.reshape(spectrogram.shape[0], spectrogram.shape[1])
+    # spectrogram = spectrogram.cpu().detach().numpy()
+    tf = librosa.griffinlim(spectrogram, n_iter=256)
+
+    # tf = torchaudio.transforms.GriffinLim(N_FFT, 256, WIN_LENGTH, HOP_LENGTH, power=1)
+    # waveform = tf(spectrogram)
+    # wf = waveform.numpy()
+
+    trace = obspy.Trace(data=tf)
+    trace.stats.sampling_rate = 100
+
+    
+        
+    plt.figure(figsize=(10, 6))
+    plt.imshow(spectrogram, origin='lower', aspect='auto', cmap='viridis')
+    plt.xlabel('Time Frame')
+    plt.ylabel('Frequency Bin')
+    plt.title(f"Spectrogram for Sample {index}")
+
+    stream = obspy.Stream([trace])
+    stream.plot()
 
 
-
-
-# Plot the spectrograms 
-def plot_sample_stft():
-
-  index = random.randint(0, 1000)
-  spectrogram = dataset.wfs[index].cpu().numpy()
-  print(spectrogram.shape)
-
-  # Reshape if necessary
-  # spectrogram = spectrogram.reshape(spectrogram.shape[0], spectrogram.shape[1])
-  # spectrogram = spectrogram.cpu().detach().numpy()
-  tf = librosa.griffinlim(spectrogram, n_iter=256)
-
-  # tf = torchaudio.transforms.GriffinLim(N_FFT, 256, WIN_LENGTH, HOP_LENGTH, power=1)
-  # waveform = tf(spectrogram)
-  # wf = waveform.numpy()
-
-  trace = obspy.Trace(data=tf)
-  trace.stats.sampling_rate = 100
-
-  
-      
-  plt.figure(figsize=(10, 6))
-  plt.imshow(spectrogram, origin='lower', aspect='auto', cmap='viridis')
-  plt.xlabel('Time Frame')
-  plt.ylabel('Frequency Bin')
-  plt.title(f"Spectrogram for Sample {index}")
-
-  stream = obspy.Stream([trace])
-  stream.plot()
-
-
-plot_sample_stft()
+  plot_sample_stft()

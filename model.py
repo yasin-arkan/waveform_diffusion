@@ -7,6 +7,7 @@ class Block(nn.Module):
     def __init__(self, in_ch, out_ch, time_emb_dim, up=False, cond_dim=4):
         super().__init__()
         self.time_mlp =  nn.Linear(time_emb_dim, out_ch)
+        self.cond_mlp = nn.Linear(cond_dim, out_ch)
         if up:
             self.conv1 = nn.Conv2d(2*in_ch, out_ch, 3, padding=1)
             self.transform = nn.ConvTranspose2d(out_ch, out_ch, 4, 2, 1)
@@ -17,7 +18,7 @@ class Block(nn.Module):
         self.bnorm1 = nn.BatchNorm2d(out_ch)
         self.bnorm2 = nn.BatchNorm2d(out_ch)
         self.relu  = nn.ReLU()
-        self.cond_linear = nn.Linear(cond_dim, out_ch)
+        
 
         
     def forward(self, x, t, c):
@@ -31,7 +32,7 @@ class Block(nn.Module):
         time_emb = time_emb[(..., ) + (None, ) * 2]
 
         # Conditional embedding
-        cond_emb = self.cond_linear(c)  # Process conditioning features
+        cond_emb = self.relu(self.cond_mlp(c))  # Process conditioning features
         cond_emb = cond_emb[(..., ) + (None, ) * 2] # Extend dimension
 
         h = h + time_emb + cond_emb  # Add time and conditioning embedding
