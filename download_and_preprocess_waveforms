@@ -1,0 +1,65 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "authorship_tag": "ABX9TyM4r6/QWW5gzLDiaGzgORqs",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/yasin-arkan/waveform_diffusion/blob/main/download_and_preprocess_waveforms\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "WNCsgYds402g"
+      },
+      "outputs": [],
+      "source": [
+        "from google.colab import drive\n",
+        "drive.mount('/gdrive')\n",
+        "\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!pip install obspy -q"
+      ],
+      "metadata": {
+        "id": "I-upp4O76Db_"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "%run download_data.py"
+      ],
+      "metadata": {
+        "id": "pGPmdaJh6pT9"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
